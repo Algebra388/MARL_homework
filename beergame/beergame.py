@@ -123,6 +123,7 @@ class Env:
         return self._get_observation(), rewards, self.done
 
 # 定义Q网络模型
+# using Dueling DQN 
 class QNetwork(nn.Module):
     def __init__(self, state_size, action_size):
         """
@@ -134,8 +135,10 @@ class QNetwork(nn.Module):
         super(QNetwork, self).__init__()
         self.fc1 = nn.Linear(state_size, 64)
         self.fc2 = nn.Linear(64, 64)
-        self.fc3 = nn.Linear(64, action_size)
-        
+        self.fc_A = nn.Linear(64, action_size) # this is for actions
+        self.fc_V = nn.Linear(64, 1) # this is for value
+
+
     def forward(self, state):
         """
         前向传播
@@ -145,7 +148,10 @@ class QNetwork(nn.Module):
         """
         x = torch.relu(self.fc1(state))
         x = torch.relu(self.fc2(x))
-        return self.fc3(x)
+        A = self.fc_A(x) # advantage
+        V = self.fc_V(x) # value
+        Q = V + A - A.mean(dim = 1).view(-1, 1) # broadcast
+        return Q
 
 # 定义经验回放缓冲区
 class ReplayBuffer:
@@ -287,8 +293,13 @@ class DQNAgent:
         next_states = torch.from_numpy(np.vstack([ns.flatten() for ns in next_states])).float()
         dones = torch.from_numpy(np.vstack(dones).astype(np.uint8)).float()
         
-        # 从目标网络获取下一个状态的最大预测Q值
-        Q_targets_next = self.target_network(next_states).detach().max(1)[0].unsqueeze(1)
+        # 从训练网络获取下一个状态的最大预测Q_index
+        Q_targets_next_indexs = self.q_network(next_states).detach().max(1)[1].unsqueeze(1) # [batch_size, 1] indicies
+
+        Q_targets_next = self.target_network(next_states).detach().gather(dim = 1, index = Q_targets_next_indexs)
+
+        #gather就是把out[i][j][k] = input[i][index[i][j][k]][k] -> dim = 1
+        #out[i][j] = input[i][index[i][j]] 那么index[i][j] 就是max
         
         # 计算目标Q值
         Q_targets = rewards + (self.gamma * Q_targets_next * (1 - dones))
@@ -411,10 +422,10 @@ def train_dqn(env, agent, num_episodes=1000, max_t=100, eps_start=1.0, eps_end=0
         
         # 每隔一定episode保存模型
         if i_episode % 500 == 0:
-            agent.save(f'baseline/models/dqn_agent_firm_{agent.firm_id}_episode_{i_episode}.pth')
+            agent.save(f'double_dueling_dqn/models/dqn_agent_firm_{agent.firm_id}_episode_{i_episode}.pth')
     
     # 训练结束后保存最终模型
-    agent.save(f'baseline/models/dqn_agent_firm_{agent.firm_id}_final.pth')
+    agent.save(f'double_dueling_dqn/models/dqn_agent_firm_{agent.firm_id}_final.pth')
     
     return scores
 
@@ -504,7 +515,7 @@ def plot_training_results(scores, window_size=100):
     plt.xlabel('Episode')
     plt.ylabel('奖励')
     plt.legend()
-    plt.savefig('baseline/figures/training_rewards.png')
+    plt.savefig('double_dueling_dqn/figures/training_rewards.png')
     plt.close()
 
 def plot_test_results(scores, inventory_history, orders_history, demand_history, satisfied_demand_history):
@@ -553,13 +564,13 @@ def plot_test_results(scores, inventory_history, orders_history, demand_history,
     axs[1, 1].set_ylabel('总奖励')
     
     plt.tight_layout()
-    plt.savefig('baseline/figures/test_results.png')
+    plt.savefig('double_dueling_dqn/figures/test_results.png')
     plt.close()
 
 if __name__ == "__main__":
     # 创建保存模型和图表的目录
-    os.makedirs('baseline/models', exist_ok=True)
-    os.makedirs('baseline/figures', exist_ok=True)
+    os.makedirs('double_dueling_dqn/models', exist_ok=True)
+    os.makedirs('double_dueling_dqn/figures', exist_ok=True)
     
     # 初始化环境参数
     num_firms = 3  # 假设有3个企业
